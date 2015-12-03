@@ -14,10 +14,47 @@
 #include <arpa/inet.h>
 #include <sys/wait.h>
 #include <signal.h>
+#include <string.h>
 
 #define PORT "3490"  // the port users will be connecting to
 #define BACKLOG 10     // how many pending connections queue will hold
 #define MAXDATASIZE 100
+
+typedef struct bank_account{
+    char name[101];
+    float balance;
+    unsigned int session_flag;
+    unsigned int valid;
+}account;
+
+const char** command_list = {
+    "open",
+    "start",
+    "credit",
+    "debit",
+    "balance",
+    "finish"
+    "exit"
+}
+
+int get_command_id(char* command){
+    int i;
+    for(i = 0; i < 7; i++){
+        if(strcmp(command_list[i], command) = 0) 
+            return i;
+    }
+    return 7;
+}
+
+
+
+void print_startmenu(int fd){
+    send(fd, "Enter a command listed below\n1. open (followed by accountname)\n2. start (followed by accountname)\n3. exit (to close session)\n",124, 0);
+}
+
+void print_account_menu(int fd){
+    send(fd, "Enter a command listed below\n1. credit (followed by amount)\n2. debit (followed by amount)\n3. finish (when finished with this account)\n",134, 0);
+}
 
 void sigchld_handler(int s){
     // waitpid() might overwrite errno, so we save and restore it:
@@ -26,14 +63,21 @@ void sigchld_handler(int s){
     errno = saved_errno;
 }
 
-int main(void)
-{
-    int sockfd, new_fd;  // listen on sock_fd, new connection on new_fd
-    struct addrinfo hints, *servinfo, *p;
-    struct sockaddr_storage their_addr; // connector's address information
-
-    socklen_t sin_size;
+void setup_child_killer(){
     struct sigaction sa;
+    sa.sa_handler = sigchld_handler; // reap all dead processes
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = SA_RESTART;
+    if (sigaction(SIGCHLD, &sa, NULL) == -1) {
+        perror("sigaction");
+        exit(1);
+    }
+}
+
+//setups the program to listen to the port provided and returns the discriptor interger
+int bind_and_listen(char* port){
+    int sockfd;
+    struct addrinfo hints, *servinfo, *p;  
     int yes = 1;
     int rv;
 
@@ -41,8 +85,7 @@ int main(void)
     hints.ai_family = AF_UNSPEC;
     hints.ai_socktype = SOCK_STREAM;
     hints.ai_flags = AI_PASSIVE; // use my IP
-
-    if ((rv = getaddrinfo(NULL, PORT, &hints, &servinfo)) != 0) {
+    if ((rv = getaddrinfo(NULL, port, &hints, &servinfo)) != 0) {
         fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(rv));
         return 1;
     }
@@ -64,7 +107,6 @@ int main(void)
             perror("server: bind");
             continue;
         }
-
         break;
     }
 
@@ -79,20 +121,36 @@ int main(void)
         perror("listen");
         exit(1);
     }
+    return sockfd;
+}
 
-    sa.sa_handler = sigchld_handler; // reap all dead processes
-    sigemptyset(&sa.sa_mask);
-    sa.sa_flags = SA_RESTART;
-    if (sigaction(SIGCHLD, &sa, NULL) == -1) {
-        perror("sigaction");
-        exit(1);
+void process_command(char* command){
+    char command_head[50];
+    sscans(buff, "%s", command_head);
+    switch(get_command_id(command_head)) {
+        case  1:
+            open(command);
+            break;
+        case 2:
+            start(command); 
+        case 6:
+            exit_session();
+        default:         
     }
+}
 
+int main(void){
+    char buff[100];
+    struct sockaddr_storage their_addr; // connector's address information
+    int sockfd, new_fd, numbytes;  // listen on sock_fd, new connection on new_fd
+    socklen_t sin_size;
+
+    sockfd = bind_and_listen(PORT);
+    setup_child_killer();
     printf("server: waiting for connections...\n");
 
-    char buff[100];
-    int numbytes;
-
+    account* bank;
+    memset(&bank, 0, sizeof(bank));
 
     while(1) {  // main accept() loop
         sin_size = sizeof their_addr;
@@ -101,13 +159,15 @@ int main(void)
             perror("accept");
             continue;
         }
-
         if (!fork()) { // this is the child process
             close(sockfd); // child doesn't need the listener
-            while((numbytes = recv(new_fd, buff, MAXDATASIZE-1, 0)) != 0){
+
+            while(1){
+                print_startmenu(new_fd);
+                numbytes = recv(new_fd, buff, MAXDATASIZE-1, 0);
                 buff[numbytes] = '\0';
                 printf("Command recv '%s' \n",buff);
-                send(new_fd, "got it bruh", 11, 0);
+                process_command(buff);
             }
 
             close(new_fd);

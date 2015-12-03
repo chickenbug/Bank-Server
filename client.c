@@ -2,6 +2,8 @@
 ** client.c -- a stream socket client demo
 */
 
+//TODO Carrigae return might mess me up
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -16,7 +18,7 @@
 
 #define PORT "3490" // the port client will be connecting to 
 
-#define MAXDATASIZE 100 // max number of bytes we can get at once 
+#define MAXDATASIZE 10000 // max number of bytes we can get at once 
 
 // get sockaddr, IPv4 or IPv6:
 void *get_in_addr(struct sockaddr *sa)
@@ -74,12 +76,11 @@ int main()
     freeaddrinfo(servinfo); // all done with this structure
 
     while (1){
-		numbytes = read(STDIN_FILENO, obuf, 100);
-		send(sockfd, obuf, numbytes, 0);
-
 	    numbytes = recv(sockfd, ibuf, MAXDATASIZE-1, 0);
 	    ibuf[numbytes] = '\0';
-	    printf("client: received '%s'\n",ibuf);
+	    printf("%s",ibuf);
+	    numbytes = read(STDIN_FILENO, obuf, 100);
+		send(sockfd, obuf, numbytes, 0);
 	}
 
     close(sockfd);
