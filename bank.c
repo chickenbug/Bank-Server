@@ -15,17 +15,30 @@
 #include <sys/wait.h>
 #include <signal.h>
 #include <string.h>
+#include <sys/mman.h>
+#include <semaphore.h>
 
 #define PORT "3490"  // the port users will be connecting to
 #define BACKLOG 10     // how many pending connections queue will hold
 #define MAXDATASIZE 100
+
+
 
 typedef struct bank_account{
     char name[101];
     float balance;
     unsigned int session_flag;
     unsigned int valid;
+    sem_t lock;
 }account;
+
+typedef struct bank {
+    acount[20] vault;
+    int size;
+    sem_t lock;
+}bank;
+
+unsigned int bank_init = 0;
 
 const char** command_list = {
     "open",
@@ -45,8 +58,6 @@ int get_command_id(char* command){
     }
     return 7;
 }
-
-
 
 void print_startmenu(int fd){
     send(fd, "Enter a command listed below\n1. open (followed by accountname)\n2. start (followed by accountname)\n3. exit (to close session)\n",124, 0);
@@ -139,18 +150,52 @@ void process_command(char* command){
     }
 }
 
+FILE* safe_fopen(char* file){
+    FILE* fd;
+    if(fopen(fd, file, "r+") == NULL){
+        printf("error in opening the file\n");
+        exit(1);
+    }
+    return fd;
+}
+
+bank* bank_setup(FILE* fd){
+    bank* the_bank;
+    account acct;
+    int i;
+    if((the_bank = (bank*)mmap(0, sizeof(bank), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0)) == MAP_FAILED){
+        printf("Mmap to shared file failed. EXITING...\n");
+        exit(1);
+    }
+    if(!bank_init){
+         memset(&the_bank, 0, sizeof(bank));
+         the_bank->size = 0;
+         if(sem_int(the_bank->lock) == -1){
+            printf("bank lock is broken money unsafe. EXITING\n");
+            exit(1);
+         }
+         for(i = 0; i <20; i++){
+            if(sem_init((the_bank->vault[i]).lock) == -1){
+                printf("account %d lock comprimised. Money unsafe\n", i);
+                exit(1);
+            }
+         } 
+    }
+    return the_bank;
+}
+
 int main(void){
     char buff[100];
     struct sockaddr_storage their_addr; // connector's address information
     int sockfd, new_fd, numbytes;  // listen on sock_fd, new connection on new_fd
     socklen_t sin_size;
+    FILE* shared_file;
 
     sockfd = bind_and_listen(PORT);
     setup_child_killer();
     printf("server: waiting for connections...\n");
 
-    account* bank;
-    memset(&bank, 0, sizeof(bank));
+    bank* the_bank;
 
     while(1) {  // main accept() loop
         sin_size = sizeof their_addr;
@@ -161,6 +206,9 @@ int main(void){
         }
         if (!fork()) { // this is the child process
             close(sockfd); // child doesn't need the listener
+            shared_file = safe_fopen("vault");
+            the_bank = bank_setup(shared_file);
+
 
             while(1){
                 print_startmenu(new_fd);
