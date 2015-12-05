@@ -1,9 +1,3 @@
-/*
-** client.c -- a stream socket client demo
-*/
-
-//TODO Carrigae return might mess me up
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
