@@ -62,6 +62,7 @@ void sigchld_handler(int s){
     errno = saved_errno;
 }
 
+//Sets up the signal handler that cleans up the dead children. Need to add some print statements to this
 void setup_child_killer(){
     struct sigaction sa;
     sa.sa_handler = sigchld_handler; // reap all dead processes
@@ -123,10 +124,14 @@ int bind_and_listen(char* port){
     return sockfd;
 }
 
+//TODO change the prints to sends to the client
 void open_account(char* command, int fd, bank* the_bank){
     char name[101];
     char extra[10];
     int i;
+
+    sem_wait(the_bank->lock);
+    printf("locking up to open a new acct\n");
     if(the_bank->size == 20){
         printf("The bank is full.  Cannot open a new account");
         return;
@@ -138,35 +143,70 @@ void open_account(char* command, int fd, bank* the_bank){
             return;
         }
     }
-    the_bank->vault[the_bank->size].name = name;
-    the_bank->vault[the_bank->size].valid = 1;
+    for (i = 0; i<20; i++){
+        if(!(the_bank->vault[i].valid)) break;
+    }
+    the_bank->vault[i].name = name;
+    the_bank->vault[i].valid = 1;
     the_bank->size++;
-    start(command, fd, the_bank->vault[the_bank->size-1], the_bank);
+    printf("Opening up again\n");
+    sem_post(the_bank->lock);
+    return;
 }
 
-void start(char* command, int fd, account current, bank* the_bank){
+void account_controller(account current, int fd){
     char buff[100];
     int numbytes;
-    while(1){
-        print_account_menu(fd);
-        numbytes = recv(fd, buff, MAXDATASIZE-1, 0);
+
+    if(sem_get_value(&current.lock) == 0){
+        printf("Account in session. Waiting for current customer to exit...\n");
+    }
+    sem_wait(&current.lock)
+
+    print_account_menu(fd);
+    current.session_flag = 1;
+    while((numbytes = recv(fd, buff, MAXDATASIZE-1, 0)) > 0){
         buff[numbytes] = '\0';
         printf("Command recv '%s' \n",buff);
-        process_command(buff, fd, the_bank, current);
+        if(process_account_command(buff, fd, the_bank, current)) break;
+        print_account_menu(fd);
     }
+    current.session_flag = 0;
+    sem_post(&current.lock);
 }
 
-void credit(char* command, int fd, account current, bank* the_bank){
+//Starts an account session for the given account name if it exists
+void start(char* command, int fd, bank* the_bank){
+    char extra[10], name[101];
+    sscanf(command, "%s %s", extra, name);
+
+    sem_wait(&the_bank->lock);
+    for(i = 0; i < 20; i++){
+        if(strcmp(the_bank->vault[i].name, name) == 0){
+            sem_post(&the_bank->lock);
+            account_controller(&the_bank->vault, fd);
+            break;
+        }
+    }
+    if(i == 20){
+      printf("Account named does not exist\n");
+      sem_post(&the_bank->lock);
+    } 
+}
+
+void credit(char* command, int fd, account current){
     float money;
     char extra[10];
     sscanf(command, "%s %f", extra, money);
+    current.balance += money;
     printf("Credit of $%f applied to current account\n", money, name);
 }
 
-void debit(char* command, int fd, account current, bank* the_bank){
+void debit(char* command, int fd, account current){
     float money;
     char extra[10];
     sscanf(command, "%s %f", extra, money);
+    current.balance -= money;
     printf("Debit of $%f applied to current account\n", money, name);
 }
 
@@ -176,15 +216,37 @@ void balance(char* command, int fd, account current, bank* the_bank){
 
 void finish(int fd){
     printf("Account closed.\n");
-    print_startmenu(fd);
 }
 
-void exit_session(int fd){
+void exit_session(int fd, bank* the_bank){
     printf("Session terminated.\n");
+    munmap(the_bank, sizeof(bank));
+    close(fd);
     exit(0);
 }
 
-void process_command(char* command, int fd, bank* the_bank, account current){
+int process_account_command(char* command, int fd, bank* the_bank, account current){
+    char command_head[50];
+    sscanf(command, "%s", command_head);
+    switch(get_command_id(command_head)) {
+        case 3:
+            credit(command, fd, current, the_bank);
+            return 0;
+        case 4:
+            debit(command, fd, current, the_bank);
+            return 0;
+        case 5:
+            balance(command, fd, current, the_bank);
+            return 0;
+        case 6:
+            finish(fd);
+            return 1;
+        default:
+            printf("Command invalid, please enter again\n");         
+    }
+}
+
+void process_bank_command(char* command, int fd, bank* the_bank, account current){
     char command_head[50];
     sscanf(command, "%s", command_head);
     switch(get_command_id(command_head)) {
@@ -192,20 +254,15 @@ void process_command(char* command, int fd, bank* the_bank, account current){
             open_account(command, fd, the_bank);
             break;
         case 2:
-            start(command, fd, current, the_bank);
-        case 3:
-            credit(command, fd, current, the_bank);
-        case 4:
-            debit(command, fd, current, the_bank);
-        case 5:
-            balance(command, fd, current, the_bank);
-        case 6:
-            finish(fd);
+            start(command, fd, the_bank);
+            break;
         case 7:
-            exit_session(fd);
+            exit_session(fd, bank* the_bank);
+            break;
         default:
-            printf("default case\n");         
-    }
+            printf("Command invalid, please enter again\n");
+            break;         
+    }       
 }
 
 int safe_open(char* file){
@@ -217,6 +274,8 @@ int safe_open(char* file){
     return fd;
 }
 
+//Mmaps a bank account given an open file descriptor to the file.
+/*Currently clears the file every time. Need to find a way to determine if the file exists to avoid the strech and clear  */ 
 bank* bank_setup(int fd){
     bank* the_bank;
     account acct;
@@ -224,27 +283,23 @@ bank* bank_setup(int fd){
 
     result = lseek(fd, sizeof(bank)-1, SEEK_SET);
     if (result == -1) {
-    close(fd);
-    perror("Error calling lseek() to 'stretch' the file");
-    exit(EXIT_FAILURE);
+        close(fd);
+        perror("Error calling lseek() to 'stretch' the file");
+        exit(EXIT_FAILURE);
     }
 
     result = write(fd, "", 1);
     if (result != 1) {
-    close(fd);
-    perror("Error writing last byte of the file");
-    exit(EXIT_FAILURE);
+        close(fd);
+        perror("Error writing last byte of the file");
+        exit(EXIT_FAILURE);
     }
-
     if((the_bank = (bank*)mmap(0, sizeof(bank), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0)) == MAP_FAILED){
         printf("Mmap to shared file failed. EXITING...\n");
         exit(1);
     }
-    printf("before memset\n");
     memset(the_bank, 0, sizeof(bank));
-    printf("after memset\n");
     the_bank->size = 0;
-    printf("after bank size set\n");
     if(sem_init(&the_bank->lock, 1, 1) == -1){
         printf("bank lock is broken money unsafe. EXITING\n");
         exit(1);
@@ -282,15 +337,13 @@ int main(void){
         if (!fork()) { // this is the child process
             close(sockfd); // child doesn't need the listener
             shared_file = safe_open("vault");
-            printf("Shared file opened\n");
             the_bank = bank_setup(shared_file);
-            printf("Bank has been set up\n");
-            while(1){
-                print_startmenu(new_fd);
-                numbytes = recv(new_fd, buff, MAXDATASIZE-1, 0);
+            print_startmenu(new_fd);
+            while((numbytes = recv(new_fd, buff, MAXDATASIZE-1, 0)) > 0) { 
                 buff[numbytes] = '\0';
                 printf("Command recv '%s' \n",buff);
                 process_command(buff, new_fd, the_bank);
+                print_startmenu(new_fd);
             }
 
             close(new_fd);
