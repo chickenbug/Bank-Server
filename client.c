@@ -5,6 +5,7 @@
 #include <string.h>
 #include <netdb.h>
 #include <sys/types.h>
+#include <sys/wait.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 
@@ -29,7 +30,7 @@ int main()
     int sockfd, numbytes;  
     char ibuf[MAXDATASIZE], obuf[MAXDATASIZE];
     struct addrinfo hints, *servinfo, *p;
-    int rv;
+    int rv, pid;
     char s[INET6_ADDRSTRLEN];
 
     memset(&hints, 0, sizeof hints);
@@ -67,17 +68,16 @@ int main()
             s, sizeof s);
     printf("client: connecting to %s\n", s);
 
+    numbytes = recv(sockfd, ibuf, MAXDATASIZE-1, 0);
+    while(numbytes > 0){
+        ibuf[numbytes] = '\0';
+        printf("%s", ibuf);
+        numbytes = read(STDIN_FILENO, obuf, 200);
+        send(sockfd, obuf, numbytes, 0);
+        numbytes = recv(sockfd, ibuf, MAXDATASIZE-1, 0);
+    }
+
     freeaddrinfo(servinfo); // all done with this structure
-
-    while (1){
-	    numbytes = recv(sockfd, ibuf, MAXDATASIZE-1, 0);
-	    ibuf[numbytes] = '\0';
-	    printf("%s",ibuf);
-	    numbytes = read(STDIN_FILENO, obuf, 200);
-		send(sockfd, obuf, numbytes, 0);
-	}
-
     close(sockfd);
-
     return 0;
 }

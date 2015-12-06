@@ -1,5 +1,5 @@
 CC = gcc
-OFLAGS = -g -lpthread -o
+OFLAGS = -g -pthread -o
 CFLAGS = -g -c 
 COMPILEO = $(CC) $(OFLAGS)
 COMPILEC = $(CC) $(CFLAGS)

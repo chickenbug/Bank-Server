@@ -37,6 +37,8 @@ typedef struct my_bank {
 }bank;
 
 char **command_list = (char*[]){"open", "start", "credit", "debit", "balance", "finish", "exit"};
+char* start_menu = "Enter a command listed below\n1. open (followed by accountname)\n2. start (followed by accountname)\n3. exit (to close session)\n";
+char* account_menu = "Enter a command listed below\n1. credit (followed by amount)\n2. debit (followed by amount)\n3. finish (when finished with this account)\n";
 
 int get_command_id(char* command){
     int i;
@@ -48,11 +50,11 @@ int get_command_id(char* command){
 }
 
 void print_startmenu(int fd){
-    send(fd, "Enter a command listed below\n1. open (followed by accountname)\n2. start (followed by accountname)\n3. exit (to close session)\n",124, 0);
+    send(fd, start_menu, strlen(start_menu), 0);
 }
 
 void print_account_menu(int fd){
-    send(fd, "Enter a command listed below\n1. credit (followed by amount)\n2. debit (followed by amount)\n3. finish (when finished with this account)\n",134, 0);
+    send(fd, account_menu, strlen(account_menu), 0);
 }
 
 void sigchld_handler(int s){
@@ -312,7 +314,8 @@ int main(void){
     printf("server: waiting for connections...\n");
 
     bank* the_bank;
-
+    shared_file = safe_open("vault");
+    the_bank = bank_setup(shared_file);
     while(1) {  // main accept() loop
         sin_size = sizeof their_addr;
         new_fd = accept(sockfd, (struct sockaddr *)&their_addr, &sin_size);
@@ -323,9 +326,8 @@ int main(void){
         printf("Client connected\n");
         if (!fork()) { // this is the child process
             close(sockfd); // child doesn't need the listener
-            shared_file = safe_open("vault");
-            the_bank = bank_setup(shared_file);
             print_startmenu(new_fd);
+            printf("past the start\n");
             while((numbytes = recv(new_fd, buff, MAXDATASIZE-1, 0)) > 0) { 
                 buff[numbytes-1] = '\0';
                 printf("Command recv '%s' \n",buff);
