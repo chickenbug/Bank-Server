@@ -149,6 +149,7 @@ void open_account(char* command, int fd, bank* the_bank){
     sem_wait(&the_bank->lock);
     if(the_bank->size == 20){
         send(fd, bank_full, strlen(bank_full), 0);
+        sem_post(&the_bank->lock);
         return;
     }
     sscanf(command, "%s %s", extra, name);
