@@ -73,7 +73,7 @@ int main()
 	    numbytes = recv(sockfd, ibuf, MAXDATASIZE-1, 0);
 	    ibuf[numbytes] = '\0';
 	    printf("%s",ibuf);
-	    numbytes = read(STDIN_FILENO, obuf, 100);
+	    numbytes = read(STDIN_FILENO, obuf, 200);
 		send(sockfd, obuf, numbytes, 0);
 	}
 

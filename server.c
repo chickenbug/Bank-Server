@@ -130,7 +130,7 @@ void open_account(char* command, int fd, bank* the_bank){
     char extra[10];
     int i;
 
-    sem_wait(the_bank->lock);
+    sem_wait(&the_bank->lock);
     printf("locking up to open a new acct\n");
     if(the_bank->size == 20){
         printf("The bank is full.  Cannot open a new account");
@@ -146,22 +146,24 @@ void open_account(char* command, int fd, bank* the_bank){
     for (i = 0; i<20; i++){
         if(!(the_bank->vault[i].valid)) break;
     }
-    the_bank->vault[i].name = name;
+    strcpy(the_bank->vault[i].name, name);
     the_bank->vault[i].valid = 1;
     the_bank->size++;
     printf("Opening up again\n");
-    sem_post(the_bank->lock);
+    sem_post(&the_bank->lock);
     return;
 }
 
-void account_controller(account current, int fd){
+void account_controller(account current, int fd, bank* the_bank){
     char buff[100];
     int numbytes;
+    int sval;
 
-    if(sem_get_value(&current.lock) == 0){
+    sem_getvalue(&current.lock, &sval);
+    if(sval == 0){
         printf("Account in session. Waiting for current customer to exit...\n");
     }
-    sem_wait(&current.lock)
+    sem_wait(&current.lock);
 
     print_account_menu(fd);
     current.session_flag = 1;
@@ -178,13 +180,14 @@ void account_controller(account current, int fd){
 //Starts an account session for the given account name if it exists
 void start(char* command, int fd, bank* the_bank){
     char extra[10], name[101];
+    int i;
     sscanf(command, "%s %s", extra, name);
 
     sem_wait(&the_bank->lock);
     for(i = 0; i < 20; i++){
         if(strcmp(the_bank->vault[i].name, name) == 0){
             sem_post(&the_bank->lock);
-            account_controller(&the_bank->vault, fd);
+            account_controller(the_bank->vault[i], fd, the_bank);
             break;
         }
     }
@@ -199,7 +202,7 @@ void credit(char* command, int fd, account current){
     char extra[10];
     sscanf(command, "%s %f", extra, money);
     current.balance += money;
-    printf("Credit of $%f applied to current account\n", money, name);
+    printf("Credit of $%f applied to current account\n", money);
 }
 
 void debit(char* command, int fd, account current){
@@ -207,10 +210,10 @@ void debit(char* command, int fd, account current){
     char extra[10];
     sscanf(command, "%s %f", extra, money);
     current.balance -= money;
-    printf("Debit of $%f applied to current account\n", money, name);
+    printf("Debit of $%f applied to current account\n", money);
 }
 
-void balance(char* command, int fd, account current, bank* the_bank){
+void balance(char* command, int fd, account current){
     printf("Balance of current account is $%f\n", current.balance);
 }
 
@@ -230,13 +233,13 @@ int process_account_command(char* command, int fd, bank* the_bank, account curre
     sscanf(command, "%s", command_head);
     switch(get_command_id(command_head)) {
         case 3:
-            credit(command, fd, current, the_bank);
+            credit(command, fd, current);
             return 0;
         case 4:
-            debit(command, fd, current, the_bank);
+            debit(command, fd, current);
             return 0;
         case 5:
-            balance(command, fd, current, the_bank);
+            balance(command, fd, current);
             return 0;
         case 6:
             finish(fd);
@@ -246,7 +249,7 @@ int process_account_command(char* command, int fd, bank* the_bank, account curre
     }
 }
 
-void process_bank_command(char* command, int fd, bank* the_bank, account current){
+void process_bank_command(char* command, int fd, bank* the_bank){
     char command_head[50];
     sscanf(command, "%s", command_head);
     switch(get_command_id(command_head)) {
@@ -257,7 +260,7 @@ void process_bank_command(char* command, int fd, bank* the_bank, account current
             start(command, fd, the_bank);
             break;
         case 7:
-            exit_session(fd, bank* the_bank);
+            exit_session(fd, the_bank);
             break;
         default:
             printf("Command invalid, please enter again\n");
@@ -342,7 +345,7 @@ int main(void){
             while((numbytes = recv(new_fd, buff, MAXDATASIZE-1, 0)) > 0) { 
                 buff[numbytes] = '\0';
                 printf("Command recv '%s' \n",buff);
-                process_command(buff, new_fd, the_bank);
+                process_bank_command(buff, new_fd, the_bank);
                 print_startmenu(new_fd);
             }
 
