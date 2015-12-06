@@ -37,8 +37,8 @@ typedef struct my_bank {
 }bank;
 
 char **command_list = (char*[]){"open", "start", "credit", "debit", "balance", "finish", "exit"};
-char* start_menu = "Enter a command listed below\n1. open (followed by accountname)\n2. start (followed by accountname)\n3. exit (to close session)\n";
-char* account_menu = "Enter a command listed below\n1. credit (followed by amount)\n2. debit (followed by amount)\n3. finish (when finished with this account)\n";
+char* start_menu = "\nEnter a command listed below\n1. open (followed by accountname)\n2. start (followed by accountname)\n3. exit (to close session)\n";
+char* account_menu = "\nEnter a command listed below\n1. credit (followed by amount)\n2. debit (followed by amount)\n3. balance (displays current balance)\n4. finish (when finished with this account)\n";
 
 int get_command_id(char* command){
     int i;
@@ -57,11 +57,31 @@ void print_account_menu(int fd){
     send(fd, account_menu, strlen(account_menu), 0);
 }
 
+void print_bank(bank* the_bank){
+    int i;
+
+    sem_wait(&the_bank->lock);
+    
+    printf("Printing contents of bank...\n");
+    for(i = 0; i < 20; i++){
+        if(the_bank->vault[i].valid){
+            if(!the_bank->vault[i].session_flag)
+                printf("%s\tBalance: %f\n", the_bank->vault[i].name, the_bank->vault[i].balance);
+            else
+                printf("%s\tIN SESSION\n", the_bank->vault[i].name);
+        }
+    }
+    printf("\n");
+    sem_post(&the_bank->lock);
+}
+
 void sigchld_handler(int s){
     // waitpid() might overwrite errno, so we save and restore it:
     int saved_errno = errno;
     while(waitpid(-1, NULL, WNOHANG) > 0);
     errno = saved_errno;
+    printf("Client disconnected\n");
+    printf("Cleaned up child <%d>\n", s);
 }
 
 //Sets up the signal handler that cleans up the dead children. Need to add some print statements to this
@@ -130,19 +150,23 @@ void account_controller(int current, int fd, bank* the_bank){
     char buff[200];
     int numbytes;
     int sval;
-
-    sem_getvalue(&the_bank->vault[current].lock, &sval);
-    if(sval == 0){
-        printf("Account in session. Waiting for current customer to exit...\n");
+    char in_session[300];
+    sprintf(in_session, "\nAccount %s in session. Waiting for current customer to exit...\n", the_bank->vault[current].name);
+    while(1){
+        sem_getvalue(&the_bank->vault[current].lock, &sval);
+        if(sval == 0){
+            send(fd, in_session, strlen(in_session), 0);
+            sleep(2);
+            continue;
+        }
+        break;
     }
     sem_wait(&the_bank->vault[current].lock);
-
-
+    the_bank->vault[current].session_flag = 1;
     print_account_menu(fd);
     the_bank->vault[current].session_flag = 1;
     while((numbytes = recv(fd, buff, MAXDATASIZE-1, 0)) > 0){
         buff[numbytes-1] = '\0';
-        printf("Command recv '%s' \n",buff);
         if(process_account_command(buff, fd, the_bank, current)) break;
         print_account_menu(fd);
     }
@@ -154,17 +178,20 @@ void account_controller(int current, int fd, bank* the_bank){
 void open_account(char* command, int fd, bank* the_bank){
     char name[101];
     char extra[10];
+    char* bank_full = "\nThe bank is full.  Cannot open a new account\n";
+    char* exists = "\nAccount already exists\n";
+    char created[200];
     int i;
 
     sem_wait(&the_bank->lock);
     if(the_bank->size == 20){
-        printf("The bank is full.  Cannot open a new account");
+        send(fd, bank_full, strlen(bank_full), 0);
         return;
     }
     sscanf(command, "%s %s", extra, name);
     for(i = 0; i < 20; i++){
         if(strcmp(the_bank->vault[i].name,name)==0){
-            printf("Account already exitsts\n");
+            send(fd, exists, strlen(exists), 0);
             return;
         }
     }
@@ -175,31 +202,41 @@ void open_account(char* command, int fd, bank* the_bank){
     the_bank->vault[i].valid = 1;
     the_bank->size++;
     sem_post(&the_bank->lock);
+    sprintf(created, "\nAccount %s opened\n", the_bank->vault[i].name);
+    send(fd, created, strlen(created), 0);
     return;
 }
 
 //Starts an account session for the given account name if it exists
 void start(char* command, int fd, bank* the_bank){
-    char extra[10], name[101];
+    char extra[10];
+    char name[101];
+    char* dne = "\nAccount named does not exist\n";
+    char success[200];
     int i;
     sscanf(command, "%s %s", extra, name);
 
     sem_wait(&the_bank->lock);
     for(i = 0; i < 20; i++){
-        if(strcmp(the_bank->vault[i].name, name) == 0){
+        if(strcmp(the_bank->vault[i].name, name) == 0 && the_bank->vault[i].valid){
             sem_post(&the_bank->lock);
+            sprintf(success, "\nSession for account %s successfully started\n", the_bank->vault[i].name);
+            send(fd, success, strlen(success), 0);
             account_controller(i, fd, the_bank);
             break;
         }
     }
     if(i == 20){
-      printf("Account named does not exist\n");
+      send(fd, dne, strlen(dne), 0);
       sem_post(&the_bank->lock);
     } 
 }
 
 void exit_session(int fd, bank* the_bank){
-    printf("Session terminated.\n");
+    char* term = "\nSession terminated\n";
+    char* msg = "\nServer disconnected from client. Shutting down...\n";
+    send(fd, term, strlen(term), 0);
+    send(fd, msg, strlen(msg), 0);
     munmap(the_bank, sizeof(bank));
     close(fd);
     exit(0);
@@ -208,35 +245,45 @@ void exit_session(int fd, bank* the_bank){
 int process_account_command(char* command, int fd, bank* the_bank, int current){
     char command_head[50], extra[10];
     float money;
+    char credit[200], debit[200], balance[200], closed[300];
+    char* insufficient = "\nInsufficient funds\n";
+    char* def = "\nCommand invalid, please enter again\n";
+
+    sprintf(closed, "\nSession for account %s closed\n", the_bank->vault[current].name);
     sscanf(command, "%s", command_head);
     switch(get_command_id(command_head)) {
         case 2: //credit
             sscanf(command, "%s %f", extra, &money);
             (the_bank->vault[current].balance) += money;
-            printf("Credit of $%f applied to current account\n", money);
+            sprintf(credit, "\nCredit of $%f applied to current account\n", money);
+            send(fd, credit, strlen(credit), 0);
             return 0;
         case 3: //debit
             sscanf(command, "%s %f", extra, &money);
             if(money > the_bank->vault[current].balance){
-                printf("Insufficient funds\n");
+                send(fd, insufficient, strlen(insufficient), 0);
                 return 0;
             }
             (the_bank->vault[current].balance) -= money;
-            printf("Debit of $%f applied to current account\n", money);            
+            sprintf(debit, "\nDebit of $%f applied to current account\n", money);
+            send(fd, debit, strlen(debit), 0);            
             return 0;
         case 4: //balance
-            printf("Balance of current account is $%f\n", the_bank->vault[current].balance);            
+            sprintf(balance, "\nBalance of current account is $%f\n", the_bank->vault[current].balance);
+            send(fd, balance, strlen(balance), 0);            
             return 0;
         case 5: //finish
-            printf("Account closed.\n");;
+            send(fd, closed, strlen(closed), 0);
             return 1;
         default:
-            printf("Command invalid, please enter again\n");         
+            send(fd, def, strlen(def), 0);
+            return 0;         
     }
 }
 
 void process_bank_command(char* command, int fd, bank* the_bank){
     char command_head[50];
+    char* def = "\nCommand invalid, please enter again\n";
     sscanf(command, "%s", command_head);
     switch(get_command_id(command_head)) {
         case  0:
@@ -249,7 +296,7 @@ void process_bank_command(char* command, int fd, bank* the_bank){
             exit_session(fd, the_bank);
             break;
         default:
-            printf("Command invalid, please enter again\n");
+            send(fd, def, strlen(def), 0);
             break;         
     }       
 }
@@ -308,6 +355,7 @@ int main(void){
     int sockfd, new_fd, numbytes;  // listen on sock_fd, new connection on new_fd
     socklen_t sin_size;
     int shared_file;
+    int print_pid, connection_pid;
 
     sockfd = bind_and_listen(PORT);
     setup_child_killer();
@@ -316,6 +364,14 @@ int main(void){
     bank* the_bank;
     shared_file = safe_open("vault");
     the_bank = bank_setup(shared_file);
+    print_pid = fork();
+    if(print_pid!=0) printf("Created child service process <%d>\n", print_pid);
+    if(print_pid == 0){
+        while(1){
+            print_bank(the_bank);
+            sleep(20);
+        }
+    }
     while(1) {  // main accept() loop
         sin_size = sizeof their_addr;
         new_fd = accept(sockfd, (struct sockaddr *)&their_addr, &sin_size);
@@ -324,17 +380,17 @@ int main(void){
             continue;
         }
         printf("Client connected\n");
-        if (!fork()) { // this is the child process
+        connection_pid = fork();
+        if(connection_pid) printf("Created child service process <%d>\n", connection_pid);
+
+        if (!connection_pid) { // this is the child process
             close(sockfd); // child doesn't need the listener
             print_startmenu(new_fd);
-            printf("past the start\n");
             while((numbytes = recv(new_fd, buff, MAXDATASIZE-1, 0)) > 0) { 
                 buff[numbytes-1] = '\0';
-                printf("Command recv '%s' \n",buff);
                 process_bank_command(buff, new_fd, the_bank);
                 print_startmenu(new_fd);
             }
-
             close(new_fd);
             exit(0);
         }
