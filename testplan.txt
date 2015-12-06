@@ -1,0 +1,31 @@
+Tim Goetjen tag 135
+Kinh Hoang khh39 
+Test Plan
+
+We’ve tested our code using the test cases outlined in bank-testcases.txt using multiple client computers, and with local and remote servers. 
+The rationale behind the test cases can be explained as follows:
+
+	Open: Tests for invalid single account open and invalid repeat account open
+
+	Start: Tests for invalid start of nonexistent account, valid start of existing opened account, and wait on account already in session
+
+	Exit: Tests for valid exit command in bank session
+
+	Credit: Tests for valid credit of funds into a valid account
+
+	Debit: Tests for valid withdrawal of funds via debit when funds are present, and invalid withdrawal of funds when insufficient funds are present
+
+	Balance: Tests for valid balance check on an account
+
+	Finish: Tests for valid exit of account session
+
+	Print Bank: Tests for print of bank balance every 20 seconds and print of IN SESSION for accounts that are in session
+
+	Bank Full: Tests for the invalid opening of an account after all 20 accounts are filled
+
+	Connect: Tests to see if client attempts to reconnect with server every 3 seconds upon connection failure
+
+	Sever Killed: Tests for notification messages after the server process for the client exits or is killed
+
+	Invalid Commands: Tests for the warning messages after an invalid command is given
+
