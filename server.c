@@ -1,80 +1,16 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <unistd.h>
-#include <errno.h>
-#include <string.h>
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <netdb.h>
-#include <arpa/inet.h>
-#include <sys/wait.h>
-#include <signal.h>
-#include <string.h>
-#include <sys/mman.h>
-#include <semaphore.h>
-#include <sys/types.h>
-#include <sys/stat.h>
-#include <fcntl.h>
+#include "server.h"
 
-#define PORT "3490"  // the port users will be connecting to
-#define BACKLOG 10     // how many pending connections queue will hold
-#define MAXDATASIZE 100
-
-
-typedef struct bank_account{
-    char name[101];
-    float balance;
-    unsigned int session_flag;
-    unsigned int valid;
-    sem_t lock;
-}account;
-
-typedef struct my_bank {
-    account vault[20];
-    int size;
-    sem_t lock;
-}bank;
-
-char **command_list = (char*[]){"open", "start", "credit", "debit", "balance", "finish", "exit"};
-char* start_menu = "\nEnter a command listed below\n1. open (followed by accountname)\n2. start (followed by accountname)\n3. exit (to close session)\n";
-char* account_menu = "\nEnter a command listed below\n1. credit (followed by amount)\n2. debit (followed by amount)\n3. balance (displays current balance)\n4. finish (when finished with this account)\n";
-
-int get_command_id(char* command){
-    int i;
-    for(i = 0; i < 7; i++){
-        if(strcmp(command_list[i], command) == 0) 
-            return i;
+// open file with error checks
+int safe_open(char* file){
+    int fd;
+    if((fd = open(file, O_RDWR | O_CREAT, S_IRUSR | S_IRGRP | S_IROTH | S_IWUSR | S_IWGRP | S_IWOTH)) == -1){
+        perror("file");
+        exit(1);
     }
-    return 7;
+    return fd;
 }
 
-void print_startmenu(int fd){
-    send(fd, start_menu, strlen(start_menu), 0);
-}
-
-void print_account_menu(int fd){
-    send(fd, account_menu, strlen(account_menu), 0);
-}
-
-void print_bank(bank* the_bank){
-    int i;
-
-    sem_wait(&the_bank->lock);
-    
-    printf("Printing contents of bank...\n");
-    for(i = 0; i < 20; i++){
-        if(the_bank->vault[i].valid){
-            if(!the_bank->vault[i].session_flag)
-                printf("%s\tBalance: %f\n", the_bank->vault[i].name, the_bank->vault[i].balance);
-            else
-                printf("%s\tIN SESSION\n", the_bank->vault[i].name);
-        }
-    }
-    printf("\n");
-    sem_post(&the_bank->lock);
-}
-
+// cleans up children on SIG_CHLD signal
 void sigchld_handler(int s){
     // waitpid() might overwrite errno, so we save and restore it:
     int saved_errno = errno;
@@ -96,7 +32,7 @@ void setup_child_killer(){
     }
 }
 
-//setups the program to listen to the port provided and returns the discriptor interger
+//sets up the program to listen to the port provided and returns the discriptor interger
 int bind_and_listen(char* port){
     int sockfd;
     struct addrinfo hints, *servinfo, *p;  
@@ -106,7 +42,7 @@ int bind_and_listen(char* port){
     memset(&hints, 0, sizeof hints);
     hints.ai_family = AF_UNSPEC;
     hints.ai_socktype = SOCK_STREAM;
-    hints.ai_flags = AI_PASSIVE; // use my IP
+    hints.ai_flags = AI_PASSIVE;
     if ((rv = getaddrinfo(NULL, port, &hints, &servinfo)) != 0) {
         fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(rv));
         return 1;
@@ -118,12 +54,10 @@ int bind_and_listen(char* port){
             perror("server: socket");
             continue;
         }
-
         if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(int)) == -1) {
             perror("setsockopt");
             exit(1);
         }
-
         if (bind(sockfd, p->ai_addr, p->ai_addrlen) == -1) {
             close(sockfd);
             perror("server: bind");
@@ -132,13 +66,11 @@ int bind_and_listen(char* port){
         break;
     }
 
-    freeaddrinfo(servinfo); // all done with this structure
-
+    freeaddrinfo(servinfo);
     if (p == NULL)  {
         fprintf(stderr, "server: failed to bind\n");
         exit(1);
     }
-
     if (listen(sockfd, BACKLOG) == -1) {
         perror("listen");
         exit(1);
@@ -146,6 +78,37 @@ int bind_and_listen(char* port){
     return sockfd;
 }
 
+/*sends menu to client for bank session*/
+void print_startmenu(int fd){
+    char* start_menu = "\nEnter a command listed below\n1. open (followed by accountname)\n2. start (followed by accountname)\n3. exit (to close session)\n";
+    send(fd, start_menu, strlen(start_menu), 0);
+}
+
+/*sends menu to client for account session*/
+void print_account_menu(int fd){
+    char* account_menu = "\nEnter a command listed below\n1. credit (followed by amount)\n2. debit (followed by amount)\n3. balance (displays current balance)\n4. finish (when finished with this account)\n";
+    send(fd, account_menu, strlen(account_menu), 0);
+}
+
+/* Locks the bank and prints all accounts with their balances or "IN SESSION" as appropriate*/
+void print_bank(bank* the_bank){
+    int i;
+    sem_wait(&the_bank->lock);
+    
+    printf("Printing contents of bank...\n");
+    for(i = 0; i < 20; i++){
+        if(the_bank->vault[i].valid){
+            if(!the_bank->vault[i].session_flag)
+                printf("%s\tBalance: %f\n", the_bank->vault[i].name, the_bank->vault[i].balance);
+            else
+                printf("%s\tIN SESSION\n", the_bank->vault[i].name);
+        }
+    }
+    printf("\n");
+    sem_post(&the_bank->lock);
+}
+
+/*Handles in session accounts. Sends and processes possible commands for an account session*/
 void account_controller(int current, int fd, bank* the_bank){
     char buff[200];
     int numbytes;
@@ -174,7 +137,7 @@ void account_controller(int current, int fd, bank* the_bank){
     sem_post(&the_bank->vault[current].lock);
 }
 
-//TODO change the prints to sends to the client
+/*Opens a new account in the bank*/
 void open_account(char* command, int fd, bank* the_bank){
     char name[101];
     char extra[10];
@@ -192,6 +155,7 @@ void open_account(char* command, int fd, bank* the_bank){
     for(i = 0; i < 20; i++){
         if(strcmp(the_bank->vault[i].name,name)==0){
             send(fd, exists, strlen(exists), 0);
+            sem_post(&the_bank->lock);
             return;
         }
     }
@@ -207,7 +171,8 @@ void open_account(char* command, int fd, bank* the_bank){
     return;
 }
 
-//Starts an account session for the given account name if it exists
+/*Starts an account session given the account name using the acconunt_controller() function.
+  Fails if no valid accounts of that name exist*/
 void start(char* command, int fd, bank* the_bank){
     char extra[10];
     char name[101];
@@ -231,17 +196,30 @@ void start(char* command, int fd, bank* the_bank){
       sem_post(&the_bank->lock);
     } 
 }
-
+/*exits bank session and closes process*/
 void exit_session(int fd, bank* the_bank){
     char* term = "\nSession terminated\n";
     char* msg = "\nServer disconnected from client. Shutting down...\n";
     send(fd, term, strlen(term), 0);
     send(fd, msg, strlen(msg), 0);
     munmap(the_bank, sizeof(bank));
+    printf("Unmapping bank from shared memory\n");
     close(fd);
     exit(0);
 }
 
+/*determines the command integer id*/
+int get_command_id(char* command){
+    char **command_list = (char*[]){"open", "start", "credit", "debit", "balance", "finish", "exit"};
+    int i;
+    for(i = 0; i < 7; i++){
+        if(strcmp(command_list[i], command) == 0) 
+            return i;
+    }
+    return 7;
+}
+
+/*processes account session commands: credits, debits, balance, finish */ 
 int process_account_command(char* command, int fd, bank* the_bank, int current){
     char command_head[50], extra[10];
     float money;
@@ -280,7 +258,7 @@ int process_account_command(char* command, int fd, bank* the_bank, int current){
             return 0;         
     }
 }
-
+/*Processes Bank session commands: open, start, exit*/
 void process_bank_command(char* command, int fd, bank* the_bank){
     char command_head[50];
     char* def = "\nCommand invalid, please enter again\n";
@@ -301,17 +279,7 @@ void process_bank_command(char* command, int fd, bank* the_bank){
     }       
 }
 
-int safe_open(char* file){
-    int fd;
-    if((fd = open(file, O_RDWR | O_CREAT, S_IRUSR | S_IRGRP | S_IROTH | S_IWUSR | S_IWGRP | S_IWOTH)) == -1){
-        perror("file");
-        exit(1);
-    }
-    return fd;
-}
-
-//Mmaps a bank account given an open file descriptor to the file.
-/*Currently clears the file every time. Need to find a way to determine if the file exists to avoid the strech and clear  */ 
+//Mmaps a bank account given an open file descriptor to the file. Always clears the file as you cannot close accounts for goood 
 bank* bank_setup(int fd){
     bank* the_bank;
     account acct;
@@ -334,6 +302,9 @@ bank* bank_setup(int fd){
         printf("Mmap to shared file failed. EXITING...\n");
         exit(1);
     }
+    else
+        printf("Successfully maps bank to file\n");
+
     memset(the_bank, 0, sizeof(bank));
     the_bank->size = 0;
     if(sem_init(&the_bank->lock, 1, 1) == -1){

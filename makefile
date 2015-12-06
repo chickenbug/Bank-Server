@@ -8,12 +8,12 @@ all: server client
 
 server: server.o
 	$(COMPILEO) server server.o
-server.o: server.c
-	$(COMPILEC) server.c
+server.o: server.c server.h
+	$(COMPILEC) server.c server.h
 client: client.o
 	$(COMPILEO) client client.o
-client.o: client.c
-	$(COMPILEC) client.c
+client.o: client.c client.h
+	$(COMPILEC) client.c client.h
 
 clean:
 	rm -f *.o server client vault
