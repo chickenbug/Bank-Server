@@ -1,0 +1,75 @@
+Kinh Hoang kh339
+Tim Goetjen tag135
+
+Bank Testcases
+
+Open(client side):
+	*account name does not exist
+		Input: open name
+		Expected Output: Account name opened
+	*account name already exists
+		Input: open name
+		Expected Output: Account already exists
+Start(client side):
+	*account name does not exist
+		Input: start name
+		Expected Output: Account named does not exist
+	*account name exists
+		Input: start name
+		Expected Output: Session for account name successfully started
+	*other client has account session for name
+		Input: start name
+		Expected Output: Account name in session.  Waiting for current customer to exit...
+Exit(client side):
+	Input: exit
+	Expected Output: Session terminated
+		
+			Server disconnected from client. Shutting down...
+			Killed
+	(Server side)
+		Input: N/A
+		Expected Output: Client disconnected
+				Cleaned up child <##>
+Credit(client side):
+	Input: credit 500
+	Expected Output: Credit of $500.00 applied to current account
+Debit(client side):
+	*$500.00 in account
+		Input: debit 400
+		Expected Output: Debit of $400.00 applied to current account
+	*$100.00 in account
+		Input: debit 200
+		Expected Output: Insufficient funds
+Balance(client side):
+	*$500.00 in account
+		Input: balance
+		Expected Output: Balance of current account is $500.00
+Finish(client side):
+	Session for account name closed
+Print Bank(server side):
+	*one account in bank
+		Input: N/A
+		Expected Output: Printing contents of bank...
+				name	Balance: $500.00
+	*account in session
+		Input: N/A
+		Expected Output: Printing contents of bank...
+				name	IN SESSION
+Bank Full(client side):
+	*attempted open
+		Input: open name
+		Expected Output: The bank is full.  Cannot open a new account
+Connect(client side):
+		*when unable to connect to server
+			Input: N/A
+			Expected Output: Failed to connect trying again in 3 seconds
+Server Killed:
+	*client process still running
+		Input: N/A
+		Expected Output: Killed
+Invalid Commands
+	*In bank session or account session
+		Input: apsodnfaoidgn
+		Expected Output: Command invalid, please enter again
+
+

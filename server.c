@@ -99,7 +99,7 @@ void print_bank(bank* the_bank){
     for(i = 0; i < 20; i++){
         if(the_bank->vault[i].valid){
             if(!the_bank->vault[i].session_flag)
-                printf("%s\tBalance: %f\n", the_bank->vault[i].name, the_bank->vault[i].balance);
+                printf("%s\tBalance: %.2f\n", the_bank->vault[i].name, the_bank->vault[i].balance);
             else
                 printf("%s\tIN SESSION\n", the_bank->vault[i].name);
         }
@@ -113,7 +113,7 @@ void account_controller(int current, int fd, bank* the_bank){
     char buff[200];
     int numbytes;
     int sval;
-    char in_session[300];
+    char in_session[300], success[200];
     sprintf(in_session, "\nAccount %s in session. Waiting for current customer to exit...\n", the_bank->vault[current].name);
     while(1){
         sem_getvalue(&the_bank->vault[current].lock, &sval);
@@ -125,6 +125,8 @@ void account_controller(int current, int fd, bank* the_bank){
         break;
     }
     sem_wait(&the_bank->vault[current].lock);
+    sprintf(success, "\nSession for account %s successfully started\n", the_bank->vault[current].name);
+    send(fd, success, strlen(success), 0);
     the_bank->vault[current].session_flag = 1;
     print_account_menu(fd);
     the_bank->vault[current].session_flag = 1;
@@ -178,7 +180,6 @@ void start(char* command, int fd, bank* the_bank){
     char extra[10];
     char name[101];
     char* dne = "\nAccount named does not exist\n";
-    char success[200];
     int i;
     sscanf(command, "%s %s", extra, name);
 
@@ -186,8 +187,6 @@ void start(char* command, int fd, bank* the_bank){
     for(i = 0; i < 20; i++){
         if(strcmp(the_bank->vault[i].name, name) == 0 && the_bank->vault[i].valid){
             sem_post(&the_bank->lock);
-            sprintf(success, "\nSession for account %s successfully started\n", the_bank->vault[i].name);
-            send(fd, success, strlen(success), 0);
             account_controller(i, fd, the_bank);
             break;
         }
@@ -234,7 +233,7 @@ int process_account_command(char* command, int fd, bank* the_bank, int current){
         case 2: //credit
             sscanf(command, "%s %f", extra, &money);
             (the_bank->vault[current].balance) += money;
-            sprintf(credit, "\nCredit of $%f applied to current account\n", money);
+            sprintf(credit, "\nCredit of $%.2f applied to current account\n", money);
             send(fd, credit, strlen(credit), 0);
             return 0;
         case 3: //debit
@@ -244,11 +243,11 @@ int process_account_command(char* command, int fd, bank* the_bank, int current){
                 return 0;
             }
             (the_bank->vault[current].balance) -= money;
-            sprintf(debit, "\nDebit of $%f applied to current account\n", money);
+            sprintf(debit, "\nDebit of $%.2f applied to current account\n", money);
             send(fd, debit, strlen(debit), 0);            
             return 0;
         case 4: //balance
-            sprintf(balance, "\nBalance of current account is $%f\n", the_bank->vault[current].balance);
+            sprintf(balance, "\nBalance of current account is $%.2f\n", the_bank->vault[current].balance);
             send(fd, balance, strlen(balance), 0);            
             return 0;
         case 5: //finish
